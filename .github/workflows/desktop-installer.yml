@@ -1,0 +1,76 @@
+name: Build graphical desktop installers
+on:
+  push:
+    branches: [feature/desktop-setup-wizard]
+    paths: ['app/**', 'personal-setup/**', 'scripts/**', 'tests/**', '.github/workflows/desktop-installer.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: desktop-installer-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: node scripts/check-source.cjs && node scripts/check-lockfiles.cjs && npm test
+  desktop:
+    needs: tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: darwin
+            arch: arm64
+          - os: macos-15-intel
+            platform: darwin
+            arch: x64
+          - os: windows-2022
+            platform: win32
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund && npm ci --prefix app --no-audit --no-fund
+      - name: Build real DMG or assisted Setup EXE with all engines
+        env:
+          TUBESAVE_BUILD_GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/build-desktop.cjs
+      - name: Verify packaged engines, MP3 conversion and embedded setup runtimes
+        run: node scripts/verify-desktop.cjs
+      - name: Real Electron setup screens and consent guards
+        shell: bash
+        run: ./node_modules/.bin/electron tests/desktop-setup-smoke.cjs
+      - name: Core app window and local IPC
+        shell: bash
+        run: ./node_modules/.bin/electron tests/electron-smoke.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Desktop-Installer-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            dist-desktop/*.dmg
+            dist-desktop/*.exe
+            ci-results/desktop-engines.json
+            ci-results/setup-*.json
+            ci-results/setup-*.png
+            ci-results/native-smoke.*
+          retention-days: 14
+          if-no-files-found: error
