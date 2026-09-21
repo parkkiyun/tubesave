@@ -1,0 +1,11 @@
+{
+  "sourceVersion": "2.2.0",
+  "sourceUploaded": true,
+  "branch": "feature/personal-updates",
+  "initialCommit": "53d05c336a599ffb4686612658effb50bf782515",
+  "localTests": {"passed": 194, "failed": 0, "skipped": 0},
+  "nativeCI": {"runId": 35576844069, "status": "consult-live-actions"},
+  "publisherKeyRegistered": false,
+  "personalReleasePublished": false,
+  "note": "Code upload is not publisher key registration or installation on the owner computer."
+}

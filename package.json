@@ -1,6 +1,6 @@
 {
   "name": "tubesave-build",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "description": "TubeSave desktop release tools",
   "engines": {
@@ -9,7 +9,9 @@
   "scripts": {
     "test": "node --test",
     "release:prepare": "node scripts/preflight-release.cjs",
-    "release:build": "node scripts/build-release.cjs"
+    "release:build": "node scripts/build-release.cjs",
+    "personal:build": "node scripts/personal/build.cjs",
+    "personal:setup": "node personal-setup/setup.cjs"
   },
   "devDependencies": {
     "electron": "44.4.3",

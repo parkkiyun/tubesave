@@ -17,3 +17,12 @@ cookies*.txt
 *.session
 .DS_Store
 __pycache__/
+
+# Personal updater build output and signing keys
+.vendor/
+dist-personal/
+.personal-test/
+setup-kits/
+*.pem
+*.pk8
+*.private-key

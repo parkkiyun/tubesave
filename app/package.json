@@ -1,7 +1,7 @@
 {
   "name": "tubesave-desktop",
   "productName": "TubeSave",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "TubeSave desktop video downloader",
   "main": "main.cjs",
   "license": "MIT",

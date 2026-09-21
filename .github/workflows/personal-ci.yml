@@ -1,0 +1,64 @@
+name: Test personal updates and build setup kits
+on:
+  push:
+    branches: [feature/personal-updates]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: personal-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22.23.2'}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: node scripts/personal/align-locks.cjs && node scripts/check-source.cjs && node scripts/check-lockfiles.cjs && npm test
+  native:
+    needs: tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: darwin
+            arch: arm64
+          - os: macos-15-intel
+            platform: darwin
+            arch: x64
+          - os: windows-2022
+            platform: win32
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22.23.2'}
+      - run: |
+          node scripts/personal/align-locks.cjs
+          npm ci --no-audit --no-fund
+          npm ci --prefix app --no-audit --no-fund
+      - name: Real two-version update and bad archive rejection
+        run: node scripts/personal/native-smoke.cjs
+      - name: Create one-time local signing setup kit
+        env:
+          TUBESAVE_BUILD_GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/personal/setup-kit.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Personal-Setup-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            setup-kits/TubeSave-Personal-Setup-*.zip
+            ci-results/personal-native-update.json
+          retention-days: 14
+          if-no-files-found: warn
