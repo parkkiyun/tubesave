@@ -9,9 +9,9 @@ concurrency:
   group: readiness-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  updater-tests:
+  module-tests:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -19,11 +19,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Test update state machine (not native installation)
-        run: node --test tests/updates.test.cjs
-      - name: Syntax-check uploaded JavaScript
+      - name: Test available core modules (not full app installation)
+        run: node --test tests/core.test.cjs tests/process.test.cjs tests/service.test.cjs tests/tools.test.cjs tests/bundled.test.cjs tests/updates.test.cjs
+      - name: Check uploaded JavaScript and shell syntax
         shell: bash
-        run: find app build scripts tests -type f \( -name '*.cjs' -o -name '*.js' \) -print0 | xargs -0 -n1 node --check
+        run: |
+          find app build scripts tests -type f \( -name '*.cjs' -o -name '*.js' \) -print0 | xargs -0 -n1 node --check
+          bash -n install_mac.command scripts/setup-mac-signing.sh
   source-completeness:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -36,49 +38,39 @@ jobs:
           node-version: '22'
       - run: node scripts/check-source.cjs
   dependencies:
-    needs: updater-tests
+    needs: module-tests
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Generate locks without executing dependency scripts
-        run: |
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          npm install --prefix app --package-lock-only --ignore-scripts --no-audit --no-fund
-      - name: Verify locked packages without executing dependency scripts
+      - name: Check committed lockfile structure
+        run: node scripts/check-lockfiles.cjs
+      - name: Install exact locked packages without dependency scripts
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm ci --prefix app --ignore-scripts --no-audit --no-fund
-          node -e "console.log('electron-updater:',require('./app/node_modules/electron-updater/package.json').version)"
-          node --test tests/updates.test.cjs
+          node -e "console.log('Electron npm package:',require('electron/package.json').version); console.log('Builder:',require('electron-builder/package.json').version); console.log('Updater:',require('./app/node_modules/electron-updater/package.json').version)"
+      - name: Collect dependency audit reports
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p ci-results
+          npm audit --json > ci-results/build-audit.json || true
+          npm audit --prefix app --omit=dev --json > ci-results/app-audit.json || true
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: dependency-lock-review-${{ github.run_id }}
+          name: dependency-review-${{ github.run_id }}
           path: |
             package-lock.json
             app/package-lock.json
+            ci-results/*.json
           retention-days: 14
-      - name: Preserve generated lockfiles on a review branch
-        env:
-          RUN_ID: ${{ github.run_id }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          BRANCH="automation/dependency-locks-$RUN_ID"
-          git switch -c "$BRANCH"
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- package-lock.json app/package-lock.json
-          if ! git diff --cached --quiet; then
-            git commit -m 'build: generate verified dependency lockfiles for review'
-            git push origin "HEAD:refs/heads/$BRANCH"
-          fi
-          printf '## Dependency review\n\nBranch: `%s`\nNo merge or release performed.\n' "$BRANCH" >> "$GITHUB_STEP_SUMMARY"
   signing-settings:
     if: github.repository == 'parkkiyun/tubesave'
     runs-on: ubuntu-24.04
