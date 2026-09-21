@@ -1,0 +1,76 @@
+name: Build and test desktop preview installers
+on:
+  push:
+    branches: [setup/tubesave-desktop-2.1]
+    paths: ['app/**', 'build/**', 'scripts/**', 'tests/**', 'package*.json', '.github/workflows/preview.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: desktop-preview-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: node scripts/check-source.cjs && node scripts/check-lockfiles.cjs && npm test
+  desktop:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: darwin
+            arch: arm64
+          - os: macos-15-intel
+            platform: darwin
+            arch: x64
+          - os: windows-2022
+            platform: win32
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check native architecture
+        env:
+          EXPECT_PLATFORM: ${{ matrix.platform }}
+          EXPECT_ARCH: ${{ matrix.arch }}
+        run: node -e "if(process.platform!==process.env.EXPECT_PLATFORM||process.arch!==process.env.EXPECT_ARCH)throw Error('Wrong native runner');"
+      - name: Install locked dependencies including real Electron runtime
+        run: |
+          npm ci --no-audit --no-fund
+          npm ci --prefix app --no-audit --no-fund
+      - name: Real Electron window, preload, IPC and UI smoke test
+        shell: bash
+        run: ./node_modules/.bin/electron tests/electron-smoke.cjs
+      - name: Build test installers with verified download engines
+        run: node scripts/build-preview.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: TubeSave-Preview-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            dist-preview/*.dmg
+            dist-preview/*.zip
+            dist-preview/*.exe
+            dist-preview/*.blockmap
+            ci-results/native-smoke.*
+          if-no-files-found: warn
+          retention-days: 14
