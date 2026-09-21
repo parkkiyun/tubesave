@@ -20,7 +20,8 @@ async function buildPersonal({config,version,output=path.resolve('dist-personal'
     extraMetadata:{name:test?'tubesave-update-test':'tubesave-personal',version,main:test?'personal-test-main.cjs':'personal-main.cjs'},
     files:['**/*','!**/test{,s}/**','!**/*.map',...(test?[]:['!personal-test-main.cjs'])],extraResources,
     artifactName:'TubeSave-Personal-${version}-${os}-${arch}.${ext}',
-    mac:{icon:'app/tubesave.icns',category:'public.app-category.utilities',target:test?['zip']:['dmg','zip'],identity:null,notarize:false,hardenedRuntime:false,
+    afterSign:require.resolve('./seal-mac.cjs'),
+    mac:{icon:'app/tubesave.icns',category:'public.app-category.utilities',target:test?['zip']:['dmg','zip'],identity:'-',notarize:false,hardenedRuntime:false,
       minimumSystemVersion:'12.0',extendInfo:{SUPublicEDKey:config.publicKey,SUFeedURL:`https://github.com/${trust.REPO}/releases/latest/download/appcast-${process.arch}.xml`,SUEnableAutomaticChecks:false,SUAutomaticallyUpdate:false,SUVerifyUpdateBeforeExtraction:true,NSAppTransportSecurity:{NSAllowsLocalNetworking:true}}},
     win:{icon:'app/tubesave.ico',target:['nsis'],signAndEditExecutable:false},
     nsis:{oneClick:false,perMachine:false,allowElevation:false,allowToChangeInstallationDirectory:true,deleteAppDataOnUninstall:false,createDesktopShortcut:!test,createStartMenuShortcut:!test,artifactName:'TubeSave-Personal-Setup-${version}-${arch}.${ext}'}};
