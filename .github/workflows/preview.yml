@@ -62,6 +62,8 @@ jobs:
         run: ./node_modules/.bin/electron tests/electron-smoke.cjs
       - name: Build test installers with verified download engines
         run: node scripts/build-preview.cjs
+      - name: Validate packaged engines and real MP3 conversion
+        run: node scripts/verify-preview.cjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -71,6 +73,7 @@ jobs:
             dist-preview/*.zip
             dist-preview/*.exe
             dist-preview/*.blockmap
-            ci-results/native-smoke.*
+            ci-results/*.json
+            ci-results/*.png
           if-no-files-found: warn
           retention-days: 14

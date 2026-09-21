@@ -1,76 +1,9 @@
-name: TubeSave deployment readiness
+name: TubeSave signing readiness (manual)
 on:
-  push:
-    branches: [setup/tubesave-desktop-2.1]
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: readiness-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
-  module-tests:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Test available core modules (not full app installation)
-        run: node --test tests/core.test.cjs tests/process.test.cjs tests/service.test.cjs tests/tools.test.cjs tests/bundled.test.cjs tests/updates.test.cjs
-      - name: Check uploaded JavaScript and shell syntax
-        shell: bash
-        run: |
-          find app build scripts tests -type f \( -name '*.cjs' -o -name '*.js' \) -print0 | xargs -0 -n1 node --check
-          bash -n install_mac.command scripts/setup-mac-signing.sh
-  source-completeness:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: node scripts/check-source.cjs
-  dependencies:
-    needs: module-tests
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Check committed lockfile structure
-        run: node scripts/check-lockfiles.cjs
-      - name: Install exact locked packages without dependency scripts
-        run: |
-          npm ci --ignore-scripts --no-audit --no-fund
-          npm ci --prefix app --ignore-scripts --no-audit --no-fund
-          node -e "console.log('Electron npm package:',require('electron/package.json').version); console.log('Builder:',require('electron-builder/package.json').version); console.log('Updater:',require('./app/node_modules/electron-updater/package.json').version)"
-      - name: Collect dependency audit reports
-        if: always()
-        shell: bash
-        run: |
-          mkdir -p ci-results
-          npm audit --json > ci-results/build-audit.json || true
-          npm audit --prefix app --omit=dev --json > ci-results/app-audit.json || true
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: dependency-review-${{ github.run_id }}
-          path: |
-            package-lock.json
-            app/package-lock.json
-            ci-results/*.json
-          retention-days: 14
   signing-settings:
     if: github.repository == 'parkkiyun/tubesave'
     runs-on: ubuntu-24.04

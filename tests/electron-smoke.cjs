@@ -1,8 +1,10 @@
 'use strict';
-// Run explicitly with Electron, not node --test. Uses real BrowserWindow, preload and IPC.
-// Test profile is isolated; no cookies or user media are accessed.
+// Explicit Electron integration test. Uses real BrowserWindow, preload and IPC.
+// No real account cookies or user media are accessed.
 if(process.versions.electron){
   const {app}=require('electron'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+  app.disableHardwareAcceleration(); // CI hosts may lack a GPU; sandbox stays enabled.
+  const expectedVersion=require('../app/package.json').version;
   const profile=fs.mkdtempSync(path.join(os.tmpdir(),'tubesave-smoke-'));
   app.setPath('appData',profile);app.setPath('userData',profile);
   let finished=false;
@@ -17,7 +19,7 @@ if(process.versions.electron){
           assert(location.protocol==='tubesave:','Local protocol');
           assert(typeof require==='undefined'&&typeof process==='undefined','Renderer isolation');
           assert(window.tubeSave,'Real preload API');
-          const state=await window.tubeSave.state();assert(state.version==='2.1.0','IPC version');
+          const state=await window.tubeSave.state();assert(state.version===${JSON.stringify(expectedVersion)},'IPC version');
           document.querySelector('[data-view="settings"]').click();assert(!document.querySelector('#view-settings').hidden,'Settings navigation');
           document.querySelector('[data-view="history"]').click();assert(!document.querySelector('#view-history').hidden,'History navigation');
           document.querySelector('[data-view="download"]').click();
