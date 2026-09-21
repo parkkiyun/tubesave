@@ -1,0 +1,36 @@
+'use strict';
+const {test}=require('node:test'),assert=require('node:assert/strict'),{EventEmitter}=require('node:events'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
+const {UpdateController,UpdatePreferences,validReleaseConfig,releaseNotes}=require('../app/lib/updates.cjs');
+class Adapter extends EventEmitter {
+ constructor(){super();this.calls=[];}
+ async checkForUpdates(){this.calls.push('check');this.emit('checking-for-update');}
+ async downloadUpdate(){this.calls.push('download');}
+ quitAndInstall(silent,restart){this.calls.push(['install',silent,restart]);}
+}
+function setup(options={}){const adapter=new Adapter(),u=new UpdateController({adapter,...options});return {adapter,u};}
+function available(f){f.adapter.emit('update-available',{version:'2.2.0',releaseNotes:'새로운 기능'});}
+async function downloaded(f){available(f);await f.u.download();f.adapter.emit('update-downloaded',{version:'2.2.0'});}
+test('unconfigured distribution is disabled, not falsely up-to-date',async()=>{const u=new UpdateController({reason:'배포 연결 필요'});assert.equal((await u.check()).status,'disabled');assert.equal(u.state().lastChecked,null);await assert.rejects(u.download(),/배포/);});
+test('updater never auto downloads, auto installs on exit or downgrades',()=>{const f=setup();for(const name of ['autoDownload','autoInstallOnAppQuit','allowPrerelease','allowDowngrade'])assert.equal(f.adapter[name],false);});
+test('concurrent checks coalesce until response',async()=>{const f=setup();await Promise.all([f.u.check(),f.u.check()]);assert.deepEqual(f.adapter.calls,['check']);});
+test('available release includes plain notes and checked time',async()=>{const f=setup({clock:()=> 'test-time'});await f.u.check();available(f);assert.equal(f.u.state().status,'available');assert.equal(f.u.state().version,'2.2.0');assert.equal(f.u.state().lastChecked,'test-time');});
+test('not-available is the only normal latest result',async()=>{const f=setup();await f.u.check();f.adapter.emit('update-not-available');assert.equal(f.u.state().status,'up-to-date');});
+test('offline errors do not leak raw tokens or claim latest',async()=>{const f=setup();f.adapter.checkForUpdates=async()=>{throw Error('https://secret:pass@example.test signed-token');};await f.u.check();assert.equal(f.u.state().status,'error');assert.equal(f.u.state().retry,'check');assert(!JSON.stringify(f.u.state()).includes('secret'));});
+test('invalid update version is rejected',()=>{const f=setup();f.adapter.emit('update-available',{version:'../evil'});assert.equal(f.u.state().status,'error');});
+test('download requires an available release',async()=>{const f=setup();await assert.rejects(f.u.download(),/확인/);assert.equal(f.adapter.calls.length,0);});
+test('download is user-initiated and concurrent clicks coalesce',async()=>{const f=setup();available(f);assert.deepEqual(f.adapter.calls,[]);await Promise.all([f.u.download(),f.u.download()]);assert.deepEqual(f.adapter.calls,['download']);});
+test('download progress is bounded and ignores early events',async()=>{const f=setup();f.adapter.emit('download-progress',{percent:20});assert.equal(f.u.state().progress,0);available(f);await f.u.download();f.adapter.emit('download-progress',{percent:300,total:-2});assert.equal(f.u.state().progress,100);assert.equal(f.u.state().total,0);});
+test('download errors leave current app and support download retry',async()=>{const f=setup();available(f);f.adapter.downloadUpdate=async()=>{throw Error('signature verification failed');};await f.u.download();assert.equal(f.u.state().status,'error');assert.equal(f.u.state().retry,'download');f.adapter.downloadUpdate=async()=>{};await f.u.download();assert.equal(f.u.state().status,'downloading');});
+test('install blocked before validated download event',async()=>{const f=setup();available(f);await f.u.download();await assert.rejects(f.u.install(),/완료/);});
+test('downloaded requires explicit install rather than automatic restart',async()=>{const f=setup();await downloaded(f);assert.equal(f.u.state().status,'downloaded');assert(!f.adapter.calls.some(Array.isArray));});
+test('busy video, queued work or engines block restart',async()=>{const f=setup({isBusy:()=>true});await downloaded(f);await assert.rejects(f.u.install(),/작업/);assert.equal(f.u.state().status,'downloaded');});
+test('install waits for service shutdown and requests relaunch',async()=>{let closed=false;const f=setup({beforeInstall:async()=>{await Promise.resolve();closed=true;}});await downloaded(f);f.adapter.quitAndInstall=(a,b)=>{assert(closed);assert.equal(a,false);assert.equal(b,true);};await f.u.install();assert.equal(f.u.state().status,'installing');});
+test('shutdown failure unlocks old app and keeps downloaded update retryable',async()=>{let restored=0;const f=setup({beforeInstall:async()=>{throw Error('disk');},installFailed:()=>restored++});await downloaded(f);await assert.rejects(f.u.install(),/설치/);assert.equal(restored,1);assert.equal(f.u.state().status,'downloaded');});
+test('asynchronous installer error also restores service',async()=>{let restored=0;const f=setup({installFailed:()=>restored++});await downloaded(f);await f.u.install();f.adapter.emit('error',Error('cannot start installer'));assert.equal(restored,1);assert.equal(f.u.state().status,'downloaded');});
+test('checking cannot interrupt downloaded or downloading update',async()=>{const f=setup();available(f);await f.u.download();await f.u.check();assert(!f.adapter.calls.includes('check'));f.adapter.emit('update-downloaded');await f.u.check();assert(!f.adapter.calls.includes('check'));});
+test('dispose detaches all updater listeners',()=>{const f=setup();f.u.dispose();assert.equal(f.adapter.eventNames().length,0);});
+test('release notes remove tags and controls, constrain length',()=>{assert.equal(releaseNotes([{note:'<b>안내</b>\u0000'},{note:'다음'}]),'안내\n\n다음');assert.equal(releaseNotes('a'.repeat(20000)).length,12000);});
+for(const bad of [null,{}, {enabled:true,provider:'generic',owner:'valid',repo:'valid'}, {enabled:true,provider:'github',owner:'https://example.org',repo:'r'}, {enabled:true,provider:'github',owner:'valid',repo:'../evil'}])test('release configuration rejects '+JSON.stringify(bad),()=>assert.equal(validReleaseConfig(bad),false));
+test('owned repository config accepted',()=>assert(validReleaseConfig({enabled:true,provider:'github',owner:'example-owner',repo:'TubeSave'})));
+test('auto-check preference persists, and rejects non-booleans',async()=>{const root=await fs.mkdtemp(path.join(os.tmpdir(),'ts-pref-'));try{const p=await new UpdatePreferences(root).init();assert(p.autoCheck);await p.save(false);assert.equal((await new UpdatePreferences(root).init()).autoCheck,false);await assert.rejects(p.save('false'));}finally{await fs.rm(root,{recursive:true,force:true});}});
+test('corrupt preference file safely uses default and can be repaired',async()=>{const root=await fs.mkdtemp(path.join(os.tmpdir(),'ts-pref-'));try{await fs.writeFile(path.join(root,'update-preferences.json'),'{invalid');const p=await new UpdatePreferences(root).init();assert(p.autoCheck);await Promise.all([p.save(false),p.save(true)]);assert.equal((await new UpdatePreferences(root).init()).autoCheck,true);}finally{await fs.rm(root,{recursive:true,force:true});}});

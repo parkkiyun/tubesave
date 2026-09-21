@@ -1,0 +1,104 @@
+name: TubeSave deployment readiness
+on:
+  push:
+    branches: [setup/tubesave-desktop-2.1]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: readiness-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  updater-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test update state machine (not native installation)
+        run: node --test tests/updates.test.cjs
+      - name: Syntax-check uploaded JavaScript
+        shell: bash
+        run: find app build scripts tests -type f \( -name '*.cjs' -o -name '*.js' \) -print0 | xargs -0 -n1 node --check
+  source-completeness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node scripts/check-source.cjs
+  dependencies:
+    needs: updater-tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Generate locks without executing dependency scripts
+        run: |
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm install --prefix app --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Verify locked packages without executing dependency scripts
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm ci --prefix app --ignore-scripts --no-audit --no-fund
+          node -e "console.log('electron-updater:',require('./app/node_modules/electron-updater/package.json').version)"
+          node --test tests/updates.test.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dependency-lock-review-${{ github.run_id }}
+          path: |
+            package-lock.json
+            app/package-lock.json
+          retention-days: 14
+      - name: Preserve generated lockfiles on a review branch
+        env:
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="automation/dependency-locks-$RUN_ID"
+          git switch -c "$BRANCH"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- package-lock.json app/package-lock.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'build: generate verified dependency lockfiles for review'
+            git push origin "HEAD:refs/heads/$BRANCH"
+          fi
+          printf '## Dependency review\n\nBranch: `%s`\nNo merge or release performed.\n' "$BRANCH" >> "$GITHUB_STEP_SUMMARY"
+  signing-settings:
+    if: github.repository == 'parkkiyun/tubesave'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: tubesave-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check presence only; never output credential values
+        env:
+          MAC_CERTIFICATE_BASE64: ${{ secrets.MAC_CERTIFICATE_BASE64 }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          MAC_SIGN_IDENTITY: ${{ vars.MAC_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: node scripts/check-signing-settings.cjs

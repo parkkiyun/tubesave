@@ -1,0 +1,119 @@
+name: Build signed TubeSave installers (manual)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Refuse incomplete application source
+        run: node scripts/check-source.cjs
+      - name: Require reviewed lockfiles
+        shell: bash
+        run: test -s package-lock.json && test -s app/package-lock.json
+      - name: Run core and integration tests
+        run: node --test
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
+          - runner: macos-15-intel
+            platform: darwin
+            arch: x64
+          - runner: windows-2022
+            platform: win32
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    environment: tubesave-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify runner and reviewed lockfiles
+        shell: bash
+        run: |
+          node -e "if(process.platform!=='${{ matrix.platform }}'||process.arch!=='${{ matrix.arch }}')process.exit(1)"
+          test -s package-lock.json && test -s app/package-lock.json
+      - name: Install pinned dependencies
+        shell: bash
+        run: npm ci && npm ci --prefix app
+      - name: Prepare Mac signing and notarization
+        if: matrix.platform == 'darwin'
+        shell: bash
+        env:
+          MAC_CERTIFICATE_BASE64: ${{ secrets.MAC_CERTIFICATE_BASE64 }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          CSC_NAME: ${{ vars.MAC_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: bash scripts/setup-mac-signing.sh
+      - name: Build signed Mac installers
+        if: matrix.platform == 'darwin'
+        env:
+          CSC_NAME: ${{ vars.MAC_SIGN_IDENTITY }}
+        run: npm run release:build
+      - name: Build signed Windows installer
+        if: matrix.platform == 'win32'
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: npm run release:build
+      - name: Collect distributable files
+        shell: bash
+        run: |
+          mkdir -p release-artifacts
+          find dist -maxdepth 1 -type f \( -name 'TubeSave-*.exe' -o -name 'TubeSave-*.dmg' -o -name 'TubeSave-*.zip' -o -name '*.blockmap' -o -name 'latest-*.yml' \) -exec cp '{}' release-artifacts/ \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tubesave-${{ matrix.platform }}-${{ matrix.arch }}
+          path: release-artifacts/*
+          if-no-files-found: error
+      - name: Remove Mac signing secrets
+        if: always() && matrix.platform == 'darwin'
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/tubesave-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/tubesave-certificate.p12"
+  draft:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    environment: tubesave-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create a DRAFT only after all builds pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p 'require("./app/package.json").version')
+          for name in latest-arm64-mac.yml latest-x64-mac.yml latest-x64.yml; do test -f "artifacts/$name"; done
+          gh release create "v$VERSION" artifacts/* --draft --target "$GITHUB_SHA" --title "TubeSave $VERSION" --notes-file release/notes.md
