@@ -16,7 +16,7 @@ async function main(){
   const tools=new Tools(path.join(dir,'engines'),{bundledRoot:path.join(resources,'engines')});await tools.init();assert(tools.health.ready);
   assert.equal(await runProcess(tools.ytdlp,['--version'],{timeout:30000}),0);
   const audio=path.join(dir,'test.mp3');assert.equal(await runProcess(tools.ffmpeg,['-hide_banner','-loglevel','error','-f','lavfi','-i','sine=frequency=440:duration=0.2','-c:a','libmp3lame',audio],{timeout:30000}),0);assert((await fs.stat(audio)).size>0);
-  if(process.platform==='darwin')await fs.access(path.join(resources,'sparkle/bin/sparkle'));
+  if(process.platform==='darwin')await fs.access(path.join(resources,'sparkle/sparkle.app/Contents/MacOS/sparkle'));
   console.log('PERSONAL_PACKAGE_OK',process.platform,process.arch,pkg.version);
  }finally{await fs.rm(dir,{recursive:true,force:true});}
 }

@@ -60,7 +60,7 @@ class PersonalUpdater extends EventEmitter{
     await fs.access(path.dirname(bundle),require('node:fs').constants.W_OK);
     // Keep Sparkle outside the app that it is about to replace, preserving framework symlinks.
     const helper=path.join(this.stage,'sparkle');await fs.cp(path.join(this.resourcesPath,'sparkle'),helper,{recursive:true,dereference:false,verbatimSymlinks:true});
-    const command=path.join(helper,'bin','sparkle');await fs.access(command,require('node:fs').constants.X_OK);
+    const command=path.join(helper,'sparkle.app','Contents','MacOS','sparkle');await fs.access(command,require('node:fs').constants.X_OK);
     const token=crypto.randomBytes(24).toString('hex');
     const server=http.createServer((req,res)=>{
       if(req.method!=='GET'){res.writeHead(405).end();return;}

@@ -18,7 +18,7 @@ async function main(){
   if('sha256:'+crypto.createHash('sha256').update(await fs.readFile(archive)).digest('hex')!==asset.digest)throw Error('GitHub CLI archive hash mismatch.');
   const unpack=path.join(root,'gh-unpack');await fs.mkdir(unpack,{recursive:true});
   if(platform==='darwin')execFileSync('/usr/bin/ditto',['-x','-k',archive,unpack]);
-  else execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command','Expand-Archive -LiteralPath $env.TS_GH_ARCHIVE -DestinationPath $env.TS_GH_UNPACK -Force'],{env:{...process.env,TS_GH_ARCHIVE:archive,TS_GH_UNPACK:unpack},stdio:'inherit'});
+  else execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command','Expand-Archive -LiteralPath $env:TS_GH_ARCHIVE -DestinationPath $env:TS_GH_UNPACK -Force'],{env:{...process.env,TS_GH_ARCHIVE:archive,TS_GH_UNPACK:unpack},stdio:'inherit'});
   async function find(dir,filename){for(const e of await fs.readdir(dir,{withFileTypes:true})){const p=path.join(dir,e.name);if(e.isFile()&&e.name===filename)return p;if(e.isDirectory()){const f=await find(p,filename);if(f)return f;}}}
   const gh=await find(unpack,platform==='win32'?'gh.exe':'gh');if(!gh)throw Error('CLI binary missing.');await fs.copyFile(gh,path.join(kit,'runtime',platform==='win32'?'gh.exe':'gh'));if(platform!=='win32')await fs.chmod(path.join(kit,'runtime/gh'),0o755);
   for(const f of ['personal-setup/setup.cjs','app/lib/personal-trust.cjs','app/lib/personal-network.cjs'])await fs.copyFile(f,path.join(kit,f));
@@ -30,7 +30,7 @@ async function main(){
   execFileSync(path.join(kit,'runtime',platform==='win32'?'node.exe':'node'),[path.join(kit,'personal-setup/setup.cjs'),'--self-test'],{stdio:'inherit'});
   const zip=path.join(root,name+'.zip');await fs.rm(zip,{force:true});
   if(platform==='darwin')execFileSync('/usr/bin/ditto',['-c','-k','--keepParent',kit,zip]);
-  else execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command','Compress-Archive -LiteralPath $env.TS_KIT -DestinationPath $env.TS_KIT_ZIP -Force'],{env:{...process.env,TS_KIT:kit,TS_KIT_ZIP:zip},stdio:'inherit'});
+  else execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command','Compress-Archive -LiteralPath $env:TS_KIT -DestinationPath $env:TS_KIT_ZIP -Force'],{env:{...process.env,TS_KIT:kit,TS_KIT_ZIP:zip},stdio:'inherit'});
   console.log('SETUP_KIT_READY',zip);
 }
 main().catch(e=>{console.error(e.message);process.exitCode=1;});
