@@ -5,6 +5,11 @@ const {runProcess}=require('../app/lib/process.cjs');
 async function main(){
   const output=path.resolve('dist-desktop');
   const resources=process.platform==='darwin'?path.join(output,process.arch==='arm64'?'mac-arm64':'mac','TubeSave.app','Contents','Resources'):path.join(output,'win-unpacked','resources');
+  const version=require('../app/package.json').version;
+  const installer=path.join(output,process.platform==='darwin'?`TubeSave-${version}-mac-${process.arch}.dmg`:`TubeSave-Setup-${version}-${process.arch}.exe`);
+  const installerStat=await fs.stat(installer);
+  assert(installerStat.isFile()&&installerStat.size>20*1024*1024,'Installer must exist, not just reports');
+  if(process.platform==='darwin')require('node:child_process').execFileSync('/usr/bin/hdiutil',['verify',installer],{stdio:'inherit',timeout:120000});
   const tmp=await fs.mkdtemp(path.join(os.tmpdir(),'tubesave-bundle-test-'));
   try{
     await fs.access(path.join(resources,'app.asar'));
@@ -20,8 +25,8 @@ async function main(){
     const {execFileSync}=require('node:child_process');
     execFileSync(path.join(resources,'publisher/runtime',process.platform==='win32'?'node.exe':'node'),['--version'],{stdio:'inherit'});
     execFileSync(path.join(resources,'publisher/runtime',process.platform==='win32'?'gh.exe':'gh'),['--version'],{stdio:'inherit'});
-    const report={publisherTools:true,platform:process.platform,arch:process.arch,asar:true,engineIntegrity:true,engineExecution:true,mp3Conversion:true,productionUpdates:false};
+    const report={installer:path.basename(installer),installerBytes:installerStat.size,publisherTools:true,platform:process.platform,arch:process.arch,asar:true,engineIntegrity:true,engineExecution:true,mp3Conversion:true,productionUpdates:false};
     await fs.mkdir('ci-results',{recursive:true});await fs.writeFile('ci-results/desktop-engines.json',JSON.stringify(report,null,2));console.log('PACKAGED_ENGINES_OK',JSON.stringify(report));
   }finally{await fs.rm(tmp,{recursive:true,force:true});}
 }
-main().catch(e=>{console.error(e);process.exitCode=1;});
+main().catch(e=>{console.error(e);process.exit(1);});

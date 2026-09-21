@@ -17,13 +17,31 @@ async function main(){
   files:['**/*','!**/test{,s}/**','!**/*.map','!personal-test-main.cjs'],
   extraResources:[{from:'resources/engines',to:'engines'},{from:'resources/desktop-distribution.json',to:'distribution.json'},{from:publisher,to:'publisher',filter:['**/*','!*.command','!*.bat']}],
   artifactName:'TubeSave-${version}-${os}-${arch}.${ext}',
-  mac:{category:'public.app-category.utilities',icon:'app/tubesave.icns',target:['dmg'],identity:'-',notarize:false,hardenedRuntime:false,minimumSystemVersion:'12.0'},
+  mac:{category:'public.app-category.utilities',icon:'app/tubesave.icns',target:['dir'],identity:'-',notarize:false,hardenedRuntime:false,minimumSystemVersion:'12.0'},
   afterSign:platform==='darwin'?require.resolve('./personal/seal-mac.cjs'):undefined,
-  dmg:{title:'TubeSave 설치',window:{width:540,height:380},contents:[{x:155,y:190,type:'file'},{x:385,y:190,type:'link',path:'/Applications'}]},
   win:{icon:'app/tubesave.ico',target:['nsis'],signExecutable:false},
   nsis:{oneClick:false,perMachine:false,allowElevation:false,allowToChangeInstallationDirectory:true,deleteAppDataOnUninstall:false,createDesktopShortcut:true,createStartMenuShortcut:true,runAfterFinish:true,installerLanguages:['ko_KR','en_US'],language:'1042',artifactName:'TubeSave-Setup-${version}-${arch}.${ext}'}
  };
- await build({config,targets:(platform==='darwin'?Platform.MAC:Platform.WINDOWS).createTarget(platform==='darwin'?['dmg']:['nsis'],Arch[arch]),publish:'never'});
- console.log('DESKTOP_INSTALLER_READY',platform,arch);
+ await build({config,targets:(platform==='darwin'?Platform.MAC:Platform.WINDOWS).createTarget(platform==='darwin'?['dir']:['nsis'],Arch[arch]),publish:'never'});
+ const version=require('../app/package.json').version;
+ const output=path.resolve('dist-desktop');
+ const installer=path.join(output,platform==='darwin'?`TubeSave-${version}-mac-${arch}.dmg`:`TubeSave-Setup-${version}-${arch}.exe`);
+ if(platform==='darwin'){
+  // Native hdiutil avoids Finder background-alias inode overflow on APFS CI hosts.
+  // Only the already sealed, verified app and the Applications shortcut are staged.
+  const bundle=path.join(output,arch==='arm64'?'mac-arm64':'mac','TubeSave.app');
+  execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',bundle],{stdio:'inherit'});
+  const stage=await fs.mkdtemp(path.join(output,'dmg-stage-'));
+  try{
+   execFileSync('/usr/bin/ditto',[bundle,path.join(stage,'TubeSave.app')]);
+   await fs.symlink('/Applications',path.join(stage,'Applications'));
+   await fs.rm(installer,{force:true});
+   execFileSync('/usr/bin/hdiutil',['create','-volname','TubeSave','-srcfolder',stage,'-ov','-format','UDZO','-fs','HFS+',installer],{stdio:'inherit',timeout:300000});
+   execFileSync('/usr/bin/hdiutil',['verify',installer],{stdio:'inherit',timeout:120000});
+  }finally{await fs.rm(stage,{recursive:true,force:true});}
+ }
+ const stat=await fs.stat(installer);
+ if(!stat.isFile()||stat.size<20*1024*1024)throw Error('A complete installer was not produced.');
+ console.log('DESKTOP_INSTALLER_READY',platform,arch,installer,stat.size);
 }
-main().catch(e=>{console.error(e);process.exitCode=1;});
+main().catch(e=>{console.error(e);process.exit(1);});

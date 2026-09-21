@@ -21,8 +21,10 @@ if(process.versions.electron){
     return {welcome:true,preload:true,consentRequired:true,githubOpenGuard:true};})()`);
    fs.mkdirSync('ci-results',{recursive:true});fs.writeFileSync('ci-results/setup-gui.json',JSON.stringify({...result,platform:process.platform,arch:process.arch},null,2));
    await win.webContents.executeJavaScript("document.getElementById('connect').hidden=true;document.getElementById('welcome').hidden=false;");
+   await new Promise(r=>setTimeout(r,250));
    fs.writeFileSync('ci-results/setup-welcome.png',(await win.webContents.capturePage()).toPNG());
    await win.webContents.executeJavaScript("document.getElementById('configure').click();");
+   await new Promise(r=>setTimeout(r,250));
    fs.writeFileSync('ci-results/setup-connect.png',(await win.webContents.capturePage()).toPNG());
    console.log('DESKTOP_SETUP_GUI_OK',JSON.stringify(result));clearTimeout(timer);app.exit(0);
   }catch(e){console.error(e);clearTimeout(timer);app.exit(1);}
