@@ -58,7 +58,7 @@ class UpdateController {
     // beforeInstall locks the service synchronously before its first await,
     // so no new job can sneak in during the shutdown transaction.
     this.set({status:'installing',message:'업데이트를 적용하고 있어요.'});
-    try{await this.beforeInstall();this.adapter.quitAndInstall(false,true);}
+    try{await this.beforeInstall();await this.adapter.quitAndInstall(false,true);}
     catch(e){this.installFailed();this.set({status:'downloaded',message:'설치를 시작하지 못했어요. 현재 앱은 그대로 유지됩니다.'});throw new UserError('업데이트 설치를 시작하지 못했습니다. 앱을 계속 사용하거나 다시 시도하세요.');}
     return this.state();
   }

@@ -1,0 +1,27 @@
+name: Align personal release lockfile metadata
+on:
+  push:
+    branches: [feature/personal-updates]
+    paths: [.github/workflows/personal-locks.yml]
+permissions:
+  contents: write
+jobs:
+  locks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.2'
+      - run: node scripts/personal/align-locks.cjs && node scripts/check-lockfiles.cjs
+      - name: Preserve only version metadata on a review branch
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          git switch -c "automation/personal-locks-$RUN_ID"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json app/package-lock.json
+          git commit -m 'build: align locked package metadata to 2.2.0'
+          git push origin HEAD

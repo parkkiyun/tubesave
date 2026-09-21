@@ -1,0 +1,109 @@
+name: Personal release (no paid certificates)
+on:
+  push:
+    branches: [main]
+    paths: ['release/personal.json', 'app/package.json']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: personal-release
+  cancel-in-progress: false
+jobs:
+  configured:
+    if: github.repository == 'parkkiyun/tubesave' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      ready: ${{ steps.key.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22.23.2'}
+      - id: key
+        run: |
+          node -e "const fs=require('fs'), c=require('./release/personal.json'), ready=require('./app/lib/personal-updater.cjs').configValid(c)&&c.appId==='local.tubesave.personal'; fs.appendFileSync(process.env.GITHUB_OUTPUT,'ready='+ready+'\n'); if(!ready)fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,'Run the one-time personal setup kit to register a free signing key. No paid certificate is needed.\n');"
+  tests:
+    needs: configured
+    if: needs.configured.outputs.ready == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22.23.2'}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: node scripts/check-source.cjs && node scripts/check-lockfiles.cjs && npm test
+  build:
+    needs: tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: darwin
+            arch: arm64
+          - os: macos-15-intel
+            platform: darwin
+            arch: x64
+          - os: windows-2022
+            platform: win32
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22.23.2'}
+      - run: |
+          npm ci --no-audit --no-fund
+          npm ci --prefix app --no-audit --no-fund
+      - name: Build application with public key and verified engines only
+        env:
+          TUBESAVE_BUILD_GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/personal/build.cjs
+      - run: node scripts/personal/verify-build.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Personal-Build-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            dist-personal/*.zip
+            dist-personal/*.exe
+            dist-personal/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+  sign-and-publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: tubesave-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22.23.2'}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Personal-Build-*
+          path: dist-personal
+          merge-multiple: true
+      - name: Sign metadata and archives; never print or package the private key
+        env:
+          TUBESAVE_UPDATE_PRIVATE_KEY: ${{ secrets.TUBESAVE_UPDATE_PRIVATE_KEY }}
+        run: node scripts/personal/sign-release.cjs
+      - name: Publish all verified personal-update targets together
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p 'require("./app/package.json").version')
+          gh release create "personal-v$VERSION" dist-personal/*.zip dist-personal/*.exe dist-personal/*.dmg dist-personal/personal-update.json dist-personal/appcast-*.xml --target "$GITHUB_SHA" --title "TubeSave Personal $VERSION" --notes-file release/personal-notes.md --latest
