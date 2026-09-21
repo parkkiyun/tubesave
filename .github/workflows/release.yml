@@ -14,15 +14,33 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Refuse incomplete application source
-        run: node scripts/check-source.cjs
-      - name: Require reviewed lockfiles
-        shell: bash
-        run: test -s package-lock.json && test -s app/package-lock.json
-      - name: Run core and integration tests
-        run: node --test
-  build:
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: node scripts/check-source.cjs && node scripts/check-lockfiles.cjs && npm test
+  signing-readiness:
     needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: tubesave-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Require real signing credentials before native release jobs
+        env:
+          MAC_CERTIFICATE_BASE64: ${{ secrets.MAC_CERTIFICATE_BASE64 }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          MAC_SIGN_IDENTITY: ${{ vars.MAC_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: node scripts/check-signing-settings.cjs
+  build:
+    needs: signing-readiness
     strategy:
       fail-fast: false
       matrix:
@@ -46,14 +64,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Verify runner and reviewed lockfiles
-        shell: bash
-        run: |
-          node -e "if(process.platform!=='${{ matrix.platform }}'||process.arch!=='${{ matrix.arch }}')process.exit(1)"
-          test -s package-lock.json && test -s app/package-lock.json
+      - name: Verify runner architecture
+        env:
+          EXPECT_PLATFORM: ${{ matrix.platform }}
+          EXPECT_ARCH: ${{ matrix.arch }}
+        run: node -e "if(process.platform!==process.env.EXPECT_PLATFORM||process.arch!==process.env.EXPECT_ARCH)throw Error('Wrong native runner');"
       - name: Install pinned dependencies
         shell: bash
         run: npm ci && npm ci --prefix app
+      - name: Test real Electron UI and IPC
+        shell: bash
+        run: ./node_modules/.bin/electron tests/electron-smoke.cjs
       - name: Prepare Mac signing and notarization
         if: matrix.platform == 'darwin'
         shell: bash
@@ -103,11 +124,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: tubesave-*
           merge-multiple: true
-      - name: Create a DRAFT only after all builds pass
+      - name: Validate updater file references, version and SHA-512
+        run: |
+          npm ci --prefix app --ignore-scripts --no-audit --no-fund
+          node scripts/validate-update-assets.cjs artifacts
+      - name: Create a DRAFT only after all builds and feed checks pass
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -115,5 +144,4 @@ jobs:
         run: |
           set -euo pipefail
           VERSION=$(node -p 'require("./app/package.json").version')
-          for name in latest-arm64-mac.yml latest-x64-mac.yml latest-x64.yml; do test -f "artifacts/$name"; done
           gh release create "v$VERSION" artifacts/* --draft --target "$GITHUB_SHA" --title "TubeSave $VERSION" --notes-file release/notes.md
