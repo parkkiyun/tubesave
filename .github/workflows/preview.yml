@@ -61,6 +61,8 @@ jobs:
         shell: bash
         run: ./node_modules/.bin/electron tests/electron-smoke.cjs
       - name: Build test installers with verified download engines
+        env:
+          TUBESAVE_BUILD_GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/build-preview.cjs
       - name: Validate packaged engines and real MP3 conversion
         run: node scripts/verify-preview.cjs

@@ -90,12 +90,14 @@ jobs:
         if: matrix.platform == 'darwin'
         env:
           CSC_NAME: ${{ vars.MAC_SIGN_IDENTITY }}
+          TUBESAVE_BUILD_GITHUB_TOKEN: ${{ github.token }}
         run: npm run release:build
       - name: Build signed Windows installer
         if: matrix.platform == 'win32'
         env:
           CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          TUBESAVE_BUILD_GITHUB_TOKEN: ${{ github.token }}
         run: npm run release:build
       - name: Collect distributable files
         shell: bash
