@@ -1,0 +1,24 @@
+name: Export tracked source snapshot
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/personal-updates]
+    paths: [.github/workflows/source-snapshot.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive tracked source only, without local credentials
+        run: git archive --format=zip --output=tubesave-source.zip HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tubesave-source-snapshot
+          path: tubesave-source.zip
+          retention-days: 7
+          if-no-files-found: error
