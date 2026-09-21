@@ -11,6 +11,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   tests:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -20,6 +21,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Check required source files
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in app/main.cjs app/preload.cjs app/ui/index.html app/ui/app.js app/ui/style.css build/release-config.cjs scripts/preflight-release.cjs install_mac.command tests/core.test.cjs; do
+            test -s "$file" || { echo "::error::Missing source file: $file"; exit 1; }
+          done
       - name: Run source tests
         run: node --test
       - name: Check script syntax
