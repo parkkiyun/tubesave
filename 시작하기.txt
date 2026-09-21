@@ -1,0 +1,7 @@
+TubeSave Desktop
+
+개발 소스와 온라인 설치기는 README.md를 확인하세요.
+실제 엔진 포함 테스트 설치본은 GitHub Actions → Build and test desktop preview installers → 성공한 실행의 Artifacts에서 받습니다.
+Mac: dist-preview 안의 DMG 또는 ZIP / Windows: Setup EXE.
+Preview는 서명·공증된 정식 배포본이 아니며 정식 자동 업데이트는 비활성입니다.
+정식 자동 업데이트 배포는 docs/RELEASE.md를 참고하세요.

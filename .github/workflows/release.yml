@@ -1,0 +1,149 @@
+name: Build signed TubeSave installers (manual)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: node scripts/check-source.cjs && node scripts/check-lockfiles.cjs && npm test
+  signing-readiness:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: tubesave-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Require real signing credentials before native release jobs
+        env:
+          MAC_CERTIFICATE_BASE64: ${{ secrets.MAC_CERTIFICATE_BASE64 }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          MAC_SIGN_IDENTITY: ${{ vars.MAC_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: node scripts/check-signing-settings.cjs
+  build:
+    needs: signing-readiness
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
+          - runner: macos-15-intel
+            platform: darwin
+            arch: x64
+          - runner: windows-2022
+            platform: win32
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    environment: tubesave-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify runner architecture
+        env:
+          EXPECT_PLATFORM: ${{ matrix.platform }}
+          EXPECT_ARCH: ${{ matrix.arch }}
+        run: node -e "if(process.platform!==process.env.EXPECT_PLATFORM||process.arch!==process.env.EXPECT_ARCH)throw Error('Wrong native runner');"
+      - name: Install pinned dependencies
+        shell: bash
+        run: npm ci && npm ci --prefix app
+      - name: Test real Electron UI and IPC
+        shell: bash
+        run: ./node_modules/.bin/electron tests/electron-smoke.cjs
+      - name: Prepare Mac signing and notarization
+        if: matrix.platform == 'darwin'
+        shell: bash
+        env:
+          MAC_CERTIFICATE_BASE64: ${{ secrets.MAC_CERTIFICATE_BASE64 }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          CSC_NAME: ${{ vars.MAC_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: bash scripts/setup-mac-signing.sh
+      - name: Build signed Mac installers
+        if: matrix.platform == 'darwin'
+        env:
+          CSC_NAME: ${{ vars.MAC_SIGN_IDENTITY }}
+          TUBESAVE_BUILD_GITHUB_TOKEN: ${{ github.token }}
+        run: npm run release:build
+      - name: Build signed Windows installer
+        if: matrix.platform == 'win32'
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          TUBESAVE_BUILD_GITHUB_TOKEN: ${{ github.token }}
+        run: npm run release:build
+      - name: Collect distributable files
+        shell: bash
+        run: |
+          mkdir -p release-artifacts
+          find dist -maxdepth 1 -type f \( -name 'TubeSave-*.exe' -o -name 'TubeSave-*.dmg' -o -name 'TubeSave-*.zip' -o -name '*.blockmap' -o -name 'latest-*.yml' \) -exec cp '{}' release-artifacts/ \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tubesave-${{ matrix.platform }}-${{ matrix.arch }}
+          path: release-artifacts/*
+          if-no-files-found: error
+      - name: Remove Mac signing secrets
+        if: always() && matrix.platform == 'darwin'
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/tubesave-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/tubesave-certificate.p12"
+  draft:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    environment: tubesave-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: tubesave-*
+          merge-multiple: true
+      - name: Validate updater file references, version and SHA-512
+        run: |
+          npm ci --prefix app --ignore-scripts --no-audit --no-fund
+          node scripts/validate-update-assets.cjs artifacts
+      - name: Create a DRAFT only after all builds and feed checks pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p 'require("./app/package.json").version')
+          gh release create "v$VERSION" artifacts/* --draft --target "$GITHUB_SHA" --title "TubeSave $VERSION" --notes-file release/notes.md

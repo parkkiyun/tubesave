@@ -1,0 +1,11 @@
+'use strict';
+const {test}=require('node:test');const assert=require('node:assert/strict');const {runProcess,childEnv}=require('../app/lib/process.cjs');const {Cancelled}=require('../app/lib/core.cjs');
+test('runner passes shell-looking data as literal arguments',async()=>{let out='';const code=await runProcess(process.execPath,['-e','console.log(process.argv[1])','hello;$(touch injected)'],{onLine:x=>out=x});assert.equal(code,0);assert.equal(out,'hello;$(touch injected)');});
+test('runner captures UTF-8 and stderr',async()=>{const lines=[];await runProcess(process.execPath,['-e',`console.log('한글 영상');console.error('경고')`],{onLine:x=>lines.push(x)});assert(lines.includes('한글 영상'));assert(lines.includes('경고'));});
+test('runner returns nonzero exit',async()=>assert.equal(await runProcess(process.execPath,['-e','process.exit(7)']),7));
+test('runner timeout stops the process',async()=>{await assert.rejects(runProcess(process.execPath,['-e','setInterval(()=>{},1000)'],{timeout:70}),/시간/);});
+test('runner abort kills process',async()=>{const control=new AbortController();const p=runProcess(process.execPath,['-e','setInterval(()=>{},1000)'],{signal:control.signal});setTimeout(()=>control.abort(),60);await assert.rejects(p,Cancelled);});
+test('preaborted runner never spawns',async()=>{const control=new AbortController();control.abort();await assert.rejects(runProcess('/does-not-exist',[],{signal:control.signal}),Cancelled);});
+test('runner surfaces missing executable',async()=>{await assert.rejects(runProcess('/not/a/real/executable',[]));});
+test('callback error terminates child',async()=>{await assert.rejects(runProcess(process.execPath,['-e',`console.log('data');setInterval(()=>{},1000)`],{onLine:()=>{throw Error('callback failure');}}),/callback failure/);});
+test('child env enables Electron Node only in children',()=>{const old=process.env.ELECTRON_RUN_AS_NODE;assert.equal(childEnv().ELECTRON_RUN_AS_NODE,'1');assert.equal(process.env.ELECTRON_RUN_AS_NODE,old);});

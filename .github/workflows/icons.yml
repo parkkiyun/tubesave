@@ -1,0 +1,34 @@
+name: Prepare TubeSave platform icons
+on:
+  push:
+    branches: [setup/tubesave-desktop-2.1]
+    paths: [scripts/generate-icons.cjs, .github/workflows/icons.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  icons:
+    if: github.repository == 'parkkiyun/tubesave'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node scripts/generate-icons.cjs
+      - name: Save generated binary icons to a review branch
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          git switch -c "automation/platform-icons-$RUN_ID"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- app/tubesave.png app/tubesave.ico app/tubesave.icns
+          if ! git diff --cached --quiet; then
+            git commit -m 'build: generate TubeSave platform icons'
+            git push origin "HEAD:refs/heads/automation/platform-icons-$RUN_ID"
+          fi
