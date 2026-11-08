@@ -4,6 +4,7 @@ const path=require('node:path');
 const crypto=require('node:crypto');
 const c=require('./core.cjs');
 const {runProcess}=require('./process.cjs');
+const {ensureAudio}=require('./media.cjs');
 const TERMINAL=new Set(['done','failed','cancelled']);
 const HISTORY_KEYS=['id','url','title','mode','quality','folder','status','stage','progress','size','file','created','error'];
 class Engine {
@@ -58,6 +59,10 @@ class Engine {
         const code=await this.runner(this.tools.ffmpeg,['-hide_banner','-nostdin','-n','-i',file,'-vn','-map_metadata','0','-codec:a','libmp3lame','-b:a','192k','-progress','pipe:1','-nostats',target],{signal,onLine:l=>{if(l.startsWith('out_time_us=')&&duration){const t=c.number(l.slice(12));if(t!==null)update({progress:Math.min(99.9,t/(duration*10000))});}else if(!l.includes('='))log(c.redact(l,ctx.secrets));}});
         if(code!==0)throw new c.UserError('MP3 변환에 실패했습니다.');file=target;
       }
+      file=await ensureAudio(this.tools.ffmpeg,file,{
+        runner:this.runner,signal,mode:job.mode,
+        onStage:()=>update({stage:'MP4 음성을 AAC로 변환 중',progress:null,speed:null,eta:null})
+      });
       if(signal.aborted)throw new c.Cancelled();
       const st=await fs.stat(file);if(!st.isFile()||!st.size)throw new c.UserError('완성된 파일이 비어 있습니다.');
       const published=await c.publishFile(file,folder);
